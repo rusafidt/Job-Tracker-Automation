@@ -216,4 +216,4 @@ Verify:
 
 ## License
 
-This project is licensed under the MIT License. See [LICENSE](/c:/Users/Rusafid%20Ahmed/Desktop/Project/AI%20Projects/Automation/LICENSE).
+This project is licensed under the MIT License. See [LICENSE](./LICENSE).
