@@ -216,4 +216,4 @@ Verify:
 
 ## License
 
-No license file is currently included. Add one if you plan to make the repository public for reuse.
+This project is licensed under the MIT License. See [LICENSE](/c:/Users/Rusafid%20Ahmed/Desktop/Project/AI%20Projects/Automation/LICENSE).
