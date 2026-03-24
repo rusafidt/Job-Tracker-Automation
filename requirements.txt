@@ -1,5 +1,6 @@
 fastapi>=0.115,<1.0
 pdf2docx>=0.5.8,<1.0
+pypdf>=5.4,<6.0
 python-dotenv>=1.0,<2.0
 python-multipart>=0.0.9,<1.0
 requests>=2.32,<3.0

@@ -1,5 +1,7 @@
 ﻿import argparse
 import html
+import asyncio
+import io
 import json
 import logging
 import os
@@ -9,31 +11,43 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import time
 import webbrowser
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from functools import lru_cache
+from threading import Lock
 from typing import Optional
+from uuid import uuid4
 
 import requests
 from dotenv import load_dotenv
 
 try:
     from fastapi import FastAPI, File, Form, UploadFile
-    from fastapi.responses import JSONResponse
     from fastapi.responses import HTMLResponse
+    from fastapi.responses import JSONResponse
+    from fastapi.responses import Response
 except ImportError:
     FastAPI = None
     File = None
     Form = None
     UploadFile = None
-    JSONResponse = None
     HTMLResponse = None
+    JSONResponse = None
+    Response = None
 
 try:
     from pdf2docx import Converter as PdfToDocxConverter
 except ImportError:
     PdfToDocxConverter = None
+
+try:
+    from pypdf import PdfReader, PdfWriter
+except ImportError:
+    PdfReader = None
+    PdfWriter = None
 
 
 GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions"
@@ -48,6 +62,78 @@ NOTION_DATABASE_ID = None
 NOTION_DATABASE_ID_NON_UK = None
 LOGGER = logging.getLogger("job_tracker")
 APP_CONFIGURED = False
+UI_LOGS = deque(maxlen=400)
+UI_LOG_SEQ = 0
+UI_LOG_LOCK = Lock()
+DOWNLOADS = {}
+DOWNLOADS_LOCK = Lock()
+
+
+class UILogHandler(logging.Handler):
+    def emit(self, record) -> None:
+        global UI_LOG_SEQ
+
+        try:
+            message = self.format(record)
+        except Exception:
+            return
+
+        with UI_LOG_LOCK:
+            UI_LOG_SEQ += 1
+            UI_LOGS.append({"seq": UI_LOG_SEQ, "message": message})
+
+
+def _get_ui_logs(after: int = 0) -> dict:
+    with UI_LOG_LOCK:
+        items = [item for item in UI_LOGS if item["seq"] > after]
+        latest = UI_LOGS[-1]["seq"] if UI_LOGS else 0
+    return {"logs": items, "latest_seq": latest}
+
+
+def _safe_slug(value: str, fallback: str = "Company") -> str:
+    base = (value or "").strip().replace(" ", "")
+    cleaned = re.sub(r"[^A-Za-z0-9]+", "", base)
+    return cleaned or fallback
+
+
+def _store_download(file_name: str, file_bytes: bytes, content_type: str) -> str:
+    token = uuid4().hex
+    now = time.time()
+    with DOWNLOADS_LOCK:
+        expired = [key for key, item in DOWNLOADS.items() if now - item["created_at"] > 3600]
+        for key in expired:
+            DOWNLOADS.pop(key, None)
+        DOWNLOADS[token] = {
+            "created_at": now,
+            "file_name": file_name,
+            "content_type": content_type,
+            "bytes": file_bytes,
+        }
+    return token
+
+
+def _get_download(token: str) -> Optional[dict]:
+    with DOWNLOADS_LOCK:
+        item = DOWNLOADS.get(token)
+        if not item:
+            return None
+        return dict(item)
+
+
+def _combine_pdf_bytes(pdf_chunks: list[bytes]) -> Optional[bytes]:
+    if PdfReader is None or PdfWriter is None:
+        LOGGER.warning("Combined application PDF skipped because pypdf is not installed.")
+        return None
+
+    writer = PdfWriter()
+    for chunk in pdf_chunks:
+        reader = PdfReader(io.BytesIO(chunk))
+        for page in reader.pages:
+            writer.add_page(page)
+
+    buffer = io.BytesIO()
+    writer.write(buffer)
+    return buffer.getvalue()
 
 
 def _setup_logging(debug: bool = False) -> None:
@@ -62,6 +148,11 @@ def _setup_logging(debug: bool = False) -> None:
     console_handler.setLevel(level)
     console_handler.setFormatter(logging.Formatter(log_format))
     LOGGER.addHandler(console_handler)
+
+    ui_handler = UILogHandler()
+    ui_handler.setLevel(level)
+    ui_handler.setFormatter(logging.Formatter(log_format))
+    LOGGER.addHandler(ui_handler)
 
     log_file_path = (os.getenv("JOB_TRACKER_LOG_FILE") or "").strip()
     if log_file_path:
@@ -887,6 +978,90 @@ def process_application(
     }
 
 
+def _process_web_submission_sync(
+    *,
+    region: str,
+    non_uk_location: str,
+    status: str,
+    source: str,
+    jd_text: str,
+    resume_name: str,
+    resume_bytes: bytes,
+    resume_content_type: str,
+    cover_name: str,
+    cover_bytes: bytes,
+    cover_content_type: str,
+) -> dict:
+    LOGGER.info("Web workflow started")
+    info = extract_job_info(jd_text)
+    LOGGER.info(
+        "Job info extraction completed | company='%s' | role='%s'",
+        info["company"],
+        info["role"],
+    )
+    combined_pdf_url = ""
+    combined_pdf_name = ""
+
+    if (
+        resume_name.lower().endswith(".pdf")
+        and cover_name.lower().endswith(".pdf")
+        and resume_bytes
+        and cover_bytes
+    ):
+        LOGGER.info("Creating combined application PDF from cover letter and resume")
+        company_slug = _safe_slug(info["company"], fallback="Company")
+        combined_pdf_name = f"Rusafid_Ahamed_{company_slug}_Application.pdf"
+        combined_pdf_bytes = _combine_pdf_bytes([cover_bytes, resume_bytes])
+        if combined_pdf_bytes:
+            token = _store_download(
+                file_name=combined_pdf_name,
+                file_bytes=combined_pdf_bytes,
+                content_type="application/pdf",
+            )
+            combined_pdf_url = f"/downloads/{token}"
+            LOGGER.info("Combined application PDF is ready | name='%s'", combined_pdf_name)
+        else:
+            LOGGER.warning("Combined application PDF could not be generated")
+
+    uploads = _process_notion_uploads(
+        jd_text=jd_text,
+        resume_name=resume_name,
+        resume_bytes=resume_bytes,
+        resume_content_type=resume_content_type,
+        cover_name=cover_name,
+        cover_bytes=cover_bytes,
+        cover_content_type=cover_content_type,
+    )
+    LOGGER.info("File processing finished; creating Notion page")
+
+    notion_payload = {
+        "company": info["company"],
+        "role": info["role"],
+        "source": source,
+        "status": status,
+        "region": region,
+        "non_uk_location": non_uk_location,
+        "jd_upload": uploads["jd_upload"],
+        "resume_pdf_upload": uploads["resume_pdf_upload"],
+        "resume_doc_upload": uploads["resume_doc_upload"],
+        "cover_upload": uploads["cover_upload"],
+    }
+    database_id, database_label = _resolve_database_id(region, non_uk_location)
+    notion_result = create_notion_entry(notion_payload, database_id=database_id)
+    LOGGER.info("Web workflow completed successfully | database='%s'", database_label)
+
+    return {
+        "company": info["company"],
+        "role": info["role"],
+        "source": source,
+        "status": status,
+        "database_label": database_label,
+        "notion_page_url": notion_result.get("url", ""),
+        "combined_pdf_url": combined_pdf_url,
+        "combined_pdf_name": combined_pdf_name,
+    }
+
+
 def _read_multiline_input(prompt: str) -> str:
     print(prompt)
     print("Press Enter on an empty line when finished:")
@@ -969,6 +1144,13 @@ def _render_fastapi_html(
         source_val = html.escape(result.get("source", ""))
         status_val = html.escape(result.get("status", "Applied"))
         notion_url = html.escape(result.get("notion_page_url", ""))
+        combined_pdf_url = html.escape(result.get("combined_pdf_url", ""))
+        combined_pdf_name = html.escape(result.get("combined_pdf_name", ""))
+        download_row = (
+            f'<div><span>Application PDF</span><a href="{combined_pdf_url}" download="{combined_pdf_name}">Download Combined PDF</a></div>'
+            if combined_pdf_url
+            else ""
+        )
         result_block = f"""
         <div class="result-card">
           <div class="result-title">Saved To Notion</div>
@@ -979,6 +1161,7 @@ def _render_fastapi_html(
             <div><span>Status</span><strong>{status_val}</strong></div>
             <div><span>Database</span><strong>{html.escape(result.get("database_label", ""))}</strong></div>
             <div><span>Entry</span><a href="{notion_url}" target="_blank">Open Notion Page</a></div>
+            {download_row}
           </div>
         </div>
         """
@@ -1134,6 +1317,123 @@ def _render_fastapi_html(
         color: var(--muted);
         font-size: 12px;
       }}
+      .loading-overlay {{
+        position: fixed;
+        inset: 0;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        background: rgba(13, 27, 42, 0.64);
+        backdrop-filter: blur(8px);
+        z-index: 999;
+      }}
+      .loading-overlay.active {{
+        display: flex;
+      }}
+      .loading-card {{
+        width: min(760px, 100%);
+        max-height: min(80vh, 720px);
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        border-radius: 20px;
+        background: rgba(7, 20, 35, 0.94);
+        color: #eef5ff;
+        box-shadow: 0 24px 80px rgba(0, 0, 0, 0.3);
+      }}
+      .loading-head {{
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 18px 20px 12px;
+      }}
+      .spinner {{
+        width: 18px;
+        height: 18px;
+        border: 3px solid rgba(255, 255, 255, 0.2);
+        border-top-color: #7ff0cf;
+        border-radius: 50%;
+        animation: spin 900ms linear infinite;
+        flex: 0 0 auto;
+      }}
+      @keyframes spin {{
+        to {{ transform: rotate(360deg); }}
+      }}
+      .loading-title {{
+        font-size: 18px;
+        font-weight: 700;
+      }}
+      .loading-subtitle {{
+        color: #aabdd6;
+        font-size: 13px;
+      }}
+      .loading-log {{
+        margin: 0;
+        padding: 0 20px 20px;
+        flex: 1 1 auto;
+        min-height: 180px;
+        overflow: auto;
+        font-size: 12px;
+        line-height: 1.55;
+        font-family: "IBM Plex Mono", monospace;
+        white-space: pre-wrap;
+      }}
+      .loading-log:empty::before {{
+        content: "Waiting for progress updates...";
+        color: #7f95b2;
+      }}
+      .loading-result {{
+        display: none;
+        padding: 0 20px 16px;
+        max-height: 220px;
+        overflow: auto;
+      }}
+      .loading-result.active {{
+        display: block;
+      }}
+      .loading-actions {{
+        display: none;
+        gap: 10px;
+        padding: 0 20px 20px;
+        flex: 0 0 auto;
+        justify-content: flex-end;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+        padding-top: 16px;
+        background: rgba(7, 20, 35, 0.98);
+      }}
+      .loading-actions.active {{
+        display: flex;
+      }}
+      .download-name {{
+        display: none;
+        flex: 1 1 auto;
+        min-width: 0;
+      }}
+      .download-name.active {{
+        display: block;
+      }}
+      .download-name input {{
+        width: 100%;
+        border: 1px solid rgba(255, 255, 255, 0.22);
+        border-radius: 999px;
+        padding: 12px 14px;
+        background: rgba(255, 255, 255, 0.06);
+        color: #eef5ff;
+        font-family: "IBM Plex Mono", monospace;
+      }}
+      .download-name input::placeholder {{
+        color: #9bb0cb;
+      }}
+      .loading-actions .ghost {{
+        background: transparent;
+        border: 1px solid rgba(255, 255, 255, 0.28);
+        color: #eef5ff;
+      }}
+      .loading-actions .ghost:hover {{
+        background: rgba(255, 255, 255, 0.08);
+      }}
     </style>
   </head>
   <body>
@@ -1201,16 +1501,52 @@ def _render_fastapi_html(
       {error_block}
       {result_block}
     </main>
+    <div id="loading-overlay" class="loading-overlay" aria-live="polite" aria-hidden="true">
+      <div class="loading-card">
+        <div class="loading-head">
+          <div class="spinner"></div>
+          <div>
+            <div class="loading-title">Submitting To Notion</div>
+            <div class="loading-subtitle">The upload and extraction steps can take a bit when files are attached.</div>
+          </div>
+        </div>
+        <pre id="loading-log" class="loading-log"></pre>
+        <div id="loading-result" class="loading-result"></div>
+        <div id="loading-actions" class="loading-actions">
+          <label id="download-name-wrap" class="download-name">
+            <input id="download-name-input" type="text" placeholder="Edit file name before download" />
+          </label>
+          <button id="loading-download" type="button" class="ghost hidden">Download Application PDF</button>
+          <button id="loading-close" type="button">Close</button>
+        </div>
+      </div>
+    </div>
     <script>
+      const form = document.querySelector("form");
       const regionSelect = document.getElementById("region");
       const nonUkWrap = document.getElementById("non-uk-wrap");
       const sourceInput = document.getElementById("source");
       const sourceOptions = document.getElementById("source-options");
+      const loadingOverlay = document.getElementById("loading-overlay");
+      const loadingLog = document.getElementById("loading-log");
+      const loadingResult = document.getElementById("loading-result");
+      const loadingActions = document.getElementById("loading-actions");
+      const loadingClose = document.getElementById("loading-close");
+      const loadingDownload = document.getElementById("loading-download");
+      const downloadNameWrap = document.getElementById("download-name-wrap");
+      const downloadNameInput = document.getElementById("download-name-input");
       const sourceOptionsByRegion = {source_options_json};
+      let logCursor = 0;
+      let logTimer = null;
+      let pendingHtml = "";
+      let pendingDownloadUrl = "";
+      let pendingDownloadName = "";
+
       function toggleNonUk() {{
         if (!regionSelect || !nonUkWrap) return;
         nonUkWrap.classList.toggle("hidden", regionSelect.value !== "non_uk");
       }}
+
       function refreshSourceOptions() {{
         if (!regionSelect || !sourceOptions) return;
         const regionKey = regionSelect.value === "non_uk" ? "non_uk" : "uk";
@@ -1227,10 +1563,181 @@ def _render_fastapi_html(
             : "LinkedIn, Wellfound, Company Careers";
         }}
       }}
+
+      function appendLogs(lines) {{
+        if (!loadingLog || !lines.length) return;
+        const nextChunk = lines.map((item) => item.message).join("\\n");
+        loadingLog.textContent = loadingLog.textContent
+          ? `${{loadingLog.textContent}}\\n${{nextChunk}}`
+          : nextChunk;
+        loadingLog.scrollTop = loadingLog.scrollHeight;
+      }}
+
+      async function pollLogs() {{
+        try {{
+          const response = await fetch(`/logs?after=${{logCursor}}`, {{ cache: "no-store" }});
+          if (!response.ok) return;
+          const payload = await response.json();
+          appendLogs(payload.logs || []);
+          logCursor = payload.latest_seq || logCursor;
+        }} catch (_error) {{
+        }}
+      }}
+
+      function normalizeDownloadName(value) {{
+        const trimmed = (value || "").trim();
+        const cleaned = trimmed.replace(/[\\\\/:*?"<>|]+/g, "_");
+        if (!cleaned) {{
+          return pendingDownloadName || "Rusafid_Ahamed_Application.pdf";
+        }}
+        return cleaned.toLowerCase().endsWith(".pdf") ? cleaned : `${{cleaned}}.pdf`;
+      }}
+
+      async function captureLogBaseline() {{
+        try {{
+          const response = await fetch("/logs?after=0", {{ cache: "no-store" }});
+          if (!response.ok) return;
+          const payload = await response.json();
+          logCursor = payload.latest_seq || 0;
+        }} catch (_error) {{
+          logCursor = 0;
+        }}
+      }}
+
+      async function startSubmit(event) {{
+        event.preventDefault();
+        if (!form) return;
+
+        const submitButton = form.querySelector('button[type="submit"], button:not([type])');
+        if (submitButton) {{
+          submitButton.disabled = true;
+          submitButton.textContent = "Submitting...";
+        }}
+        if (loadingOverlay) {{
+          loadingOverlay.classList.add("active");
+          loadingOverlay.setAttribute("aria-hidden", "false");
+        }}
+        if (loadingLog) {{
+          loadingLog.textContent = "";
+        }}
+        if (loadingResult) {{
+          loadingResult.innerHTML = "";
+          loadingResult.classList.remove("active");
+        }}
+        if (loadingActions) {{
+          loadingActions.classList.remove("active");
+        }}
+        pendingHtml = "";
+        pendingDownloadUrl = "";
+        pendingDownloadName = "";
+        if (loadingDownload) {{
+          loadingDownload.classList.add("hidden");
+        }}
+        if (downloadNameWrap) {{
+          downloadNameWrap.classList.remove("active");
+        }}
+        if (downloadNameInput) {{
+          downloadNameInput.value = "";
+        }}
+
+        await captureLogBaseline();
+        logTimer = window.setInterval(pollLogs, 1200);
+
+        try {{
+          const response = await fetch(form.action || window.location.pathname, {{
+            method: "POST",
+            body: new FormData(form),
+          }});
+          const html = await response.text();
+          window.clearInterval(logTimer);
+          logTimer = null;
+          pendingHtml = html;
+          const parsed = new DOMParser().parseFromString(html, "text/html");
+          const resultCard = parsed.querySelector(".result-card");
+          const downloadLink = parsed.querySelector('a[download]');
+          if (loadingResult && resultCard) {{
+            loadingResult.innerHTML = resultCard.outerHTML;
+            loadingResult.classList.add("active");
+          }}
+          if (downloadLink && loadingDownload) {{
+            pendingDownloadUrl = downloadLink.getAttribute("href") || "";
+            pendingDownloadName = downloadLink.getAttribute("download") || "Rusafid_Ahamed_Application.pdf";
+            loadingDownload.classList.remove("hidden");
+            if (downloadNameWrap) {{
+              downloadNameWrap.classList.add("active");
+            }}
+            if (downloadNameInput) {{
+              downloadNameInput.value = pendingDownloadName;
+            }}
+          }}
+          appendLogs([
+            {{
+              message: response.ok ? "Submission finished. Review the result below." : "Submission finished with an error. Review the details below.",
+            }},
+          ]);
+          if (loadingActions) {{
+            loadingActions.classList.add("active");
+          }}
+        }} catch (error) {{
+          window.clearInterval(logTimer);
+          logTimer = null;
+          appendLogs([
+            {{
+              message: `Request failed: ${{error instanceof Error ? error.message : String(error)}}`,
+            }},
+          ]);
+          if (submitButton) {{
+            submitButton.disabled = false;
+            submitButton.textContent = "Save To Notion";
+          }}
+        }}
+      }}
+
+      if (loadingClose) {{
+        loadingClose.addEventListener("click", () => {{
+          if (!pendingHtml) {{
+            if (loadingOverlay) {{
+              loadingOverlay.classList.remove("active");
+              loadingOverlay.setAttribute("aria-hidden", "true");
+            }}
+            return;
+          }}
+          document.open();
+          document.write(pendingHtml);
+          document.close();
+        }});
+      }}
+
+      if (loadingDownload) {{
+        loadingDownload.addEventListener("click", async () => {{
+          if (!pendingDownloadUrl) return;
+          const finalName = normalizeDownloadName(downloadNameInput ? downloadNameInput.value : pendingDownloadName);
+          try {{
+            const response = await fetch(pendingDownloadUrl, {{ cache: "no-store" }});
+            if (!response.ok) {{
+              appendLogs([{{ message: "Download failed. Please try again." }}]);
+              return;
+            }}
+            const blob = await response.blob();
+            const objectUrl = URL.createObjectURL(blob);
+            const anchor = document.createElement("a");
+            anchor.href = objectUrl;
+            anchor.download = finalName;
+            document.body.appendChild(anchor);
+            anchor.click();
+            anchor.remove();
+            window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+          }} catch (_error) {{
+            appendLogs([{{ message: "Download failed. Please try again." }}]);
+          }}
+        }});
+      }}
+
       toggleNonUk();
       refreshSourceOptions();
       regionSelect && regionSelect.addEventListener("change", toggleNonUk);
       regionSelect && regionSelect.addEventListener("change", refreshSourceOptions);
+      form && form.addEventListener("submit", startSubmit);
     </script>
   </body>
 </html>
@@ -1263,6 +1770,24 @@ def create_web_app():
         except Exception as exc:
             LOGGER.exception("Readiness check failed")
             return JSONResponse({"status": "error", "detail": str(exc)}, status_code=503)
+
+    @app.get("/logs", response_class=JSONResponse)
+    async def logs(after: int = 0):
+        return JSONResponse(_get_ui_logs(after=after))
+
+    @app.get("/downloads/{token}")
+    async def download_generated_file(token: str):
+        item = _get_download(token)
+        if not item:
+            return JSONResponse({"detail": "File not found"}, status_code=404)
+        return Response(
+            content=item["bytes"],
+            media_type=item["content_type"],
+            headers={
+                "Content-Disposition": f'attachment; filename="{item["file_name"]}"',
+                "Cache-Control": "no-store",
+            },
+        )
 
     @app.get("/", response_class=HTMLResponse)
     async def index_get():
@@ -1310,8 +1835,6 @@ def create_web_app():
             )
 
         try:
-            info = extract_job_info(jd_text)
-
             resume_name = ""
             resume_bytes = b""
             resume_content_type = ""
@@ -1319,6 +1842,7 @@ def create_web_app():
                 resume_name = resume_file.filename.strip() or "resume.pdf"
                 resume_bytes = await resume_file.read()
                 resume_content_type = resume_file.content_type or "application/octet-stream"
+                LOGGER.info("Resume file received in web request | name='%s' | bytes=%d", resume_name, len(resume_bytes))
 
             cover_name = ""
             cover_bytes = b""
@@ -1327,8 +1851,14 @@ def create_web_app():
                 cover_name = cover_file.filename.strip() or "cover_letter.pdf"
                 cover_bytes = await cover_file.read()
                 cover_content_type = cover_file.content_type or "application/octet-stream"
+                LOGGER.info("Cover letter received in web request | name='%s' | bytes=%d", cover_name, len(cover_bytes))
 
-            uploads = _process_notion_uploads(
+            result = await asyncio.to_thread(
+                _process_web_submission_sync,
+                region=region,
+                non_uk_location=non_uk_location,
+                status=status,
+                source=source,
                 jd_text=jd_text,
                 resume_name=resume_name,
                 resume_bytes=resume_bytes,
@@ -1337,30 +1867,6 @@ def create_web_app():
                 cover_bytes=cover_bytes,
                 cover_content_type=cover_content_type,
             )
-
-            notion_payload = {
-                "company": info["company"],
-                "role": info["role"],
-                "source": source,
-                "status": status,
-                "region": region,
-                "non_uk_location": non_uk_location,
-                "jd_upload": uploads["jd_upload"],
-                "resume_pdf_upload": uploads["resume_pdf_upload"],
-                "resume_doc_upload": uploads["resume_doc_upload"],
-                "cover_upload": uploads["cover_upload"],
-            }
-            database_id, database_label = _resolve_database_id(region, non_uk_location)
-            notion_result = create_notion_entry(notion_payload, database_id=database_id)
-
-            result = {
-                "company": info["company"],
-                "role": info["role"],
-                "source": source,
-                "status": status,
-                "database_label": database_label,
-                "notion_page_url": notion_result.get("url", ""),
-            }
             return HTMLResponse(
                 content=_render_fastapi_html(
                     result=result,
