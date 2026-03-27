@@ -1538,7 +1538,7 @@ def _render_fastapi_html(
       const sourceOptionsByRegion = {source_options_json};
       let logCursor = 0;
       let logTimer = null;
-      let pendingHtml = "";
+      let pendingRedirectUrl = "";
       let pendingDownloadUrl = "";
       let pendingDownloadName = "";
 
@@ -1627,7 +1627,7 @@ def _render_fastapi_html(
         if (loadingActions) {{
           loadingActions.classList.remove("active");
         }}
-        pendingHtml = "";
+        pendingRedirectUrl = "";
         pendingDownloadUrl = "";
         pendingDownloadName = "";
         if (loadingDownload) {{
@@ -1651,7 +1651,8 @@ def _render_fastapi_html(
           const html = await response.text();
           window.clearInterval(logTimer);
           logTimer = null;
-          pendingHtml = html;
+          const nextRegion = regionSelect && regionSelect.value === "non_uk" ? "non_uk" : "uk";
+          pendingRedirectUrl = nextRegion === "non_uk" ? "/?region=non_uk" : "/";
           const parsed = new DOMParser().parseFromString(html, "text/html");
           const resultCard = parsed.querySelector(".result-card");
           const downloadLink = parsed.querySelector('a[download]');
@@ -1695,16 +1696,14 @@ def _render_fastapi_html(
 
       if (loadingClose) {{
         loadingClose.addEventListener("click", () => {{
-          if (!pendingHtml) {{
+          if (!pendingRedirectUrl) {{
             if (loadingOverlay) {{
               loadingOverlay.classList.remove("active");
               loadingOverlay.setAttribute("aria-hidden", "true");
             }}
             return;
           }}
-          document.open();
-          document.write(pendingHtml);
-          document.close();
+          window.location.assign(pendingRedirectUrl);
         }});
       }}
 
@@ -1790,8 +1789,16 @@ def create_web_app():
         )
 
     @app.get("/", response_class=HTMLResponse)
-    async def index_get():
-        return HTMLResponse(content=_render_fastapi_html(source_options_by_region=_get_source_options_by_region()))
+    async def index_get(region: str = "uk"):
+        region = (region or "uk").strip().lower()
+        if region not in {"uk", "non_uk"}:
+            region = "uk"
+        return HTMLResponse(
+            content=_render_fastapi_html(
+                region=region,
+                source_options_by_region=_get_source_options_by_region(),
+            )
+        )
 
     @app.post("/", response_class=HTMLResponse)
     async def index_post(
