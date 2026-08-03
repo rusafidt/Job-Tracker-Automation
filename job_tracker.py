@@ -1051,8 +1051,8 @@ def process_application(
 
 def _process_web_submission_sync(
     *,
-    region: str,
-    non_uk_location: str,
+    country: str,
+    city: str,
     status: str,
     source: str,
     jd_text: str,
@@ -1065,10 +1065,14 @@ def _process_web_submission_sync(
 ) -> dict:
     LOGGER.info("Web workflow started")
     info = extract_job_info(jd_text)
+    resolved_country = country or info["country"] or "qatar"
+    resolved_city = city or info["city"]
     LOGGER.info(
-        "Job info extraction completed | company='%s' | role='%s'",
+        "Job info extraction completed | company='%s' | role='%s' | country='%s' | city='%s'",
         info["company"],
         info["role"],
+        resolved_country,
+        resolved_city,
     )
     combined_pdf_url = ""
     combined_pdf_name = ""
@@ -1110,14 +1114,14 @@ def _process_web_submission_sync(
         "role": info["role"],
         "source": source,
         "status": status,
-        "region": region,
-        "non_uk_location": non_uk_location,
+        "country": resolved_country,
+        "city": resolved_city,
         "jd_upload": uploads["jd_upload"],
         "resume_pdf_upload": uploads["resume_pdf_upload"],
         "resume_doc_upload": uploads["resume_doc_upload"],
         "cover_upload": uploads["cover_upload"],
     }
-    database_id, database_label = _resolve_database_id(region, non_uk_location)
+    database_id, database_label = _resolve_database_id(resolved_country, resolved_city)
     notion_result = create_notion_entry(notion_payload, database_id=database_id)
     LOGGER.info("Web workflow completed successfully | database='%s'", database_label)
 
