@@ -32,7 +32,7 @@ python job_tracker.py --cli
 
 Useful flags: `--host`, `--port`, `--no-open` (skip auto browser launch), `--debug` (verbose logging).
 
-Manual Notion write smoke test (writes a real test row into the Non-UK database — requires `.env` configured):
+Manual Notion write smoke test (writes a real test row into the Qatar database — requires `.env` configured):
 ```bash
 python test.py
 ```
@@ -50,7 +50,7 @@ IDs can be pasted as either a raw hex string or a full Notion URL — `_normaliz
 
 Everything is one module, structured in layers top to bottom:
 
-1. **Global runtime state** — module-level globals (`GROQ_API_KEY`, `NOTION_API_KEY`, `NOTION_DATABASE_ID`, `NOTION_DATABASE_ID_NON_UK`, `APP_CONFIGURED`) are populated once by `configure_runtime()` / `_load_and_validate_config()`, called from FastAPI's startup event or `main()`. Nothing above that call is safe to use.
+1. **Global runtime state** — module-level globals (`GROQ_API_KEY`, `NOTION_API_KEY`, `NOTION_DATABASE_ID_QATAR`, `NOTION_DATABASE_ID_UAE`, `NOTION_DATABASE_ID_INDIA`, `APP_CONFIGURED`) are populated once by `configure_runtime()` / `_load_and_validate_config()`, called from FastAPI's startup event or `main()`. Nothing above that call is safe to use.
 2. **In-memory log/download stores** — `UI_LOGS` (a bounded deque) captures log records via a custom `UILogHandler` so the browser UI can poll `/logs` and show live progress during a submission. `DOWNLOADS` is a TTL'd in-memory dict used to serve the generated combined-application PDF from `/downloads/{token}` without touching disk.
 3. **Groq extraction** — `extract_job_info()` calls Groq's chat completions API with a JSON-only system prompt, then `_parse_groq_json()` defensively unwraps code fences / partial JSON / key-value fallbacks. Raises if company or role can't be confidently extracted.
 4. **Notion schema-adaptive property mapping** — `_get_database_properties()` (cached) fetches the target database's schema, handling both the legacy shape and the newer `data_sources`-based shape (Notion API version `2025-09-03`). `_find_property_name()` matches against several candidate names per field (e.g. "Resume File (PDF)", "Resume PDF", "Resume File", "Resume") so the app tolerates schema variations across databases. `_build_source_property_value()` / `_build_file_property_value()` adapt values to whatever property type (`select`, `status`, `rich_text`, `files`, etc.) is actually present, and unsupported combos get recorded into a `Notes` field instead of failing.

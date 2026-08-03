@@ -50,7 +50,7 @@ def main() -> int:
         print("Missing NOTION_API_KEY in .env", file=sys.stderr)
         return 1
     if not notion_db_id:
-        print("Missing NOTION_DATABASE_ID (or NOTION_DB_ID) in .env", file=sys.stderr)
+        print("Missing NOTION_DATABASE_ID_QATAR in .env", file=sys.stderr)
         return 1
 
     today = datetime.now().date()
