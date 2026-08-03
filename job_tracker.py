@@ -1530,7 +1530,7 @@ def _render_fastapi_html(
               <option value="india" {"selected" if safe_country == "india" else ""}>India</option>
             </select>
           </div>
-          <div id="city-wrap" class="{'hidden' if safe_country not in ('uae', 'india') else ''}">
+          <div id="city-wrap" class="{'hidden' if safe_country not in CITIES_BY_COUNTRY else ''}">
             <label>City</label>
             <input
               id="city"
