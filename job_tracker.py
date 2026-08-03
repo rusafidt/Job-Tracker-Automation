@@ -6,10 +6,7 @@ import json
 import logging
 import os
 import re
-import shutil
-import subprocess
 import sys
-import tempfile
 import textwrap
 import time
 import webbrowser
@@ -37,11 +34,6 @@ except ImportError:
     HTMLResponse = None
     JSONResponse = None
     Response = None
-
-try:
-    from pdf2docx import Converter as PdfToDocxConverter
-except ImportError:
-    PdfToDocxConverter = None
 
 try:
     from pypdf import PdfReader, PdfWriter
@@ -410,7 +402,6 @@ def _process_notion_uploads(
     cover_name = (cover_name or "").strip()
     has_resume = bool(resume_name and resume_bytes)
     has_cover = bool(cover_name and cover_bytes)
-    is_resume_pdf = bool(has_resume and resume_name.lower().endswith(".pdf"))
 
     with ThreadPoolExecutor(max_workers=4) as executor:
         jd_future = executor.submit(
@@ -439,28 +430,11 @@ def _process_notion_uploads(
             if has_cover
             else None
         )
-        resume_docx_future = (
-            executor.submit(_convert_pdf_bytes_to_docx_bytes, resume_bytes, resume_name)
-            if is_resume_pdf
-            else None
-        )
-
         uploads = {
             "jd_upload": jd_future.result(),
             "resume_pdf_upload": resume_future.result() if resume_future else None,
             "cover_upload": cover_future.result() if cover_future else None,
-            "resume_doc_upload": None,
         }
-
-        if resume_docx_future:
-            resume_docx_bytes = resume_docx_future.result()
-            if resume_docx_bytes:
-                docx_name = f"{os.path.splitext(resume_name)[0]}.docx"
-                uploads["resume_doc_upload"] = _upload_file_to_notion(
-                    docx_name,
-                    resume_docx_bytes,
-                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                )
 
     return uploads
 
@@ -507,89 +481,6 @@ def _upload_local_file_to_notion(path: str, fallback_name: str) -> Optional[dict
         file_bytes = f.read()
 
     return _upload_file_to_notion(file_name, file_bytes, "application/octet-stream")
-
-
-def _find_libreoffice_converter() -> Optional[str]:
-    """
-    Resolve a reliable LibreOffice CLI executable path, prioritizing Windows installs.
-    """
-    preferred = [
-        r"C:\Program Files\LibreOffice\program\soffice.com",
-        r"C:\Program Files\LibreOffice\program\soffice.exe",
-        r"C:\Program Files (x86)\LibreOffice\program\soffice.com",
-        r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
-    ]
-    for path in preferred:
-        if os.path.exists(path):
-            return path
-
-    return (
-        shutil.which("soffice.com")
-        or shutil.which("soffice.exe")
-        or shutil.which("soffice")
-        or shutil.which("libreoffice")
-    )
-
-
-def _convert_pdf_file_to_docx_bytes(pdf_path: str) -> Optional[bytes]:
-    """
-    Convert a PDF file to DOCX using LibreOffice CLI (soffice/libreoffice), if available.
-    Returns DOCX bytes on success, else None.
-    """
-    with tempfile.TemporaryDirectory() as out_dir:
-        pdf_base = os.path.splitext(os.path.basename(pdf_path))[0]
-        docx_path = os.path.join(out_dir, f"{pdf_base}.docx")
-
-        # Preferred path: pdf2docx Python converter.
-        if PdfToDocxConverter is not None:
-            try:
-                cv = PdfToDocxConverter(pdf_path)
-                cv.convert(docx_path)
-                cv.close()
-                if os.path.exists(docx_path):
-                    with open(docx_path, "rb") as f:
-                        return f.read()
-            except Exception as exc:
-                LOGGER.warning("Resume PDF->DOCX via pdf2docx failed: %s", exc)
-        else:
-            LOGGER.warning("pdf2docx not installed; trying LibreOffice fallback.")
-
-        # Fallback path: LibreOffice CLI
-        converter = _find_libreoffice_converter()
-        if converter:
-            cmd = [
-                converter,
-                "--headless",
-                "--convert-to",
-                'docx:"MS Word 2007 XML"',
-                "--outdir",
-                out_dir,
-                pdf_path,
-            ]
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-            if proc.returncode == 0 and os.path.exists(docx_path):
-                with open(docx_path, "rb") as f:
-                    return f.read()
-            LOGGER.warning(
-                "Resume PDF->DOCX via LibreOffice failed (code=%s): %s",
-                proc.returncode,
-                (proc.stderr or proc.stdout or "").strip(),
-            )
-        else:
-            LOGGER.warning("Resume PDF->DOCX failed: no available converter.")
-
-    return None
-
-
-def _convert_pdf_bytes_to_docx_bytes(pdf_bytes: bytes, pdf_name: str) -> Optional[bytes]:
-    """
-    Convert in-memory PDF bytes to DOCX bytes via LibreOffice CLI.
-    """
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        src_path = os.path.join(tmp_dir, pdf_name or "resume.pdf")
-        with open(src_path, "wb") as f:
-            f.write(pdf_bytes)
-        return _convert_pdf_file_to_docx_bytes(src_path)
 
 
 def _normalize_property_key(name: str) -> str:
@@ -850,7 +741,6 @@ def create_notion_entry(data, database_id: str):
         "Date Applied": {"date": {"start": today.isoformat()}},
         "Follow-up Date": {"date": {"start": follow_up_date.isoformat()}},
         "Follow-up Count": {"number": 0},
-        "Sam Checked": {"checkbox": False},
     }
 
     status_prop_name = _find_property_name(db_props, "Status")
@@ -880,19 +770,7 @@ def create_notion_entry(data, database_id: str):
                 "Source value provided but Source/Source Platform/Application Source property was not found in database."
             )
 
-    country = (data.get("country") or "").strip().lower()
-    if country not in COUNTRY_DATABASE_IDS:
-        country = "qatar"
     city = (data.get("city") or "").strip()
-
-    country_prop_name = _find_property_name(db_props, "Country")
-    country_schema = db_props.get(country_prop_name) if country_prop_name else None
-    country_value = _build_source_property_value(COUNTRY_LABELS[country], country_schema or {})
-    if country_schema and country_value:
-        properties[country_prop_name] = country_value
-        LOGGER.info("Mapped country to Notion property '%s'", country_prop_name)
-    else:
-        LOGGER.warning("Country property was not found in database; country was not written.")
 
     city_prop_name = _find_property_name(db_props, "City", "Job Location", "Location")
     city_schema = db_props.get(city_prop_name) if city_prop_name else None
@@ -922,17 +800,6 @@ def create_notion_entry(data, database_id: str):
     elif data.get("resume_pdf_upload"):
         LOGGER.warning("Resume PDF upload provided but Resume File (PDF) property was not found.")
 
-    resume_doc_prop_name = _find_property_name(
-        db_props, "Resume File (DOC)", "Resume DOC", "Resume File (DOCX)", "Resume DOCX"
-    )
-    resume_doc_schema = db_props.get(resume_doc_prop_name) if resume_doc_prop_name else None
-    resume_doc_prop = _build_file_property_value(resume_doc_schema, data.get("resume_doc_upload"))
-    if resume_doc_schema and resume_doc_prop is not None:
-        properties[resume_doc_prop_name] = resume_doc_prop
-        LOGGER.info("Mapped resume DOC to Notion property '%s'", resume_doc_prop_name)
-    elif data.get("resume_doc_upload"):
-        LOGGER.warning("Resume DOC upload provided but Resume File (DOC) property was not found.")
-
     cover_prop_name = _find_property_name(db_props, "Cover Letter File", "Cover Letter")
     cover_schema = db_props.get(cover_prop_name) if cover_prop_name else None
     cover_prop = _build_file_property_value(cover_schema, data.get("cover_upload"))
@@ -942,8 +809,6 @@ def create_notion_entry(data, database_id: str):
     notes_text = []
     if (resume_pdf_schema or {}).get("type") == "url" and data.get("resume_pdf_upload"):
         notes_text.append("Resume File (PDF) property is URL type; could not attach Notion upload there.")
-    if (resume_doc_schema or {}).get("type") == "url" and data.get("resume_doc_upload"):
-        notes_text.append("Resume File (DOC) property is URL type; could not attach Notion upload there.")
     if (cover_schema or {}).get("type") == "url" and data.get("cover_upload"):
         notes_text.append("Cover Letter File property is URL type; could not attach Notion upload there.")
     if (jd_schema or {}).get("type") == "url" and data.get("jd_upload"):
@@ -963,6 +828,8 @@ def create_notion_entry(data, database_id: str):
         json=payload,
         timeout=60,
     )
+    if not resp.ok:
+        LOGGER.error("Notion page creation failed | status=%s | body=%s", resp.status_code, resp.text)
     resp.raise_for_status()
     result = resp.json()
     LOGGER.info("Notion page created | page_id=%s | url=%s", result.get("id", ""), result.get("url", ""))
@@ -1027,11 +894,9 @@ def process_application(
         "role": info["role"],
         "source": source,
         "status": status,
-        "country": resolved_country,
         "city": resolved_city,
         "jd_upload": uploads["jd_upload"],
         "resume_pdf_upload": uploads["resume_pdf_upload"],
-        "resume_doc_upload": uploads["resume_doc_upload"],
         "cover_upload": uploads["cover_upload"],
     }
 
@@ -1114,11 +979,9 @@ def _process_web_submission_sync(
         "role": info["role"],
         "source": source,
         "status": status,
-        "country": resolved_country,
         "city": resolved_city,
         "jd_upload": uploads["jd_upload"],
         "resume_pdf_upload": uploads["resume_pdf_upload"],
-        "resume_doc_upload": uploads["resume_doc_upload"],
         "cover_upload": uploads["cover_upload"],
     }
     database_id, database_label = _resolve_database_id(resolved_country, resolved_city)
@@ -1467,6 +1330,7 @@ def _render_fastapi_html(
         padding: 0 20px 16px;
         max-height: 220px;
         overflow: auto;
+        flex: 0 0 auto;
       }}
       .loading-result.active {{
         display: block;
