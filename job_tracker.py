@@ -1605,8 +1605,10 @@ def _render_fastapi_html(
     </div>
     <script>
       const form = document.querySelector("form");
-      const regionSelect = document.getElementById("region");
-      const nonUkWrap = document.getElementById("non-uk-wrap");
+      const countrySelect = document.getElementById("country");
+      const cityWrap = document.getElementById("city-wrap");
+      const cityInput = document.getElementById("city");
+      const cityOptions = document.getElementById("city-options");
       const sourceInput = document.getElementById("source");
       const sourceOptions = document.getElementById("source-options");
       const loadingOverlay = document.getElementById("loading-overlay");
@@ -1617,22 +1619,23 @@ def _render_fastapi_html(
       const loadingDownload = document.getElementById("loading-download");
       const downloadNameWrap = document.getElementById("download-name-wrap");
       const downloadNameInput = document.getElementById("download-name-input");
-      const sourceOptionsByRegion = {source_options_json};
+      const sourceOptionsByCountry = {source_options_json};
+      const cityOptionsByCountry = {city_options_json};
       let logCursor = 0;
       let logTimer = null;
       let pendingRedirectUrl = "";
       let pendingDownloadUrl = "";
       let pendingDownloadName = "";
 
-      function toggleNonUk() {{
-        if (!regionSelect || !nonUkWrap) return;
-        nonUkWrap.classList.toggle("hidden", regionSelect.value !== "non_uk");
+      function toggleCityField() {{
+        if (!countrySelect || !cityWrap) return;
+        const showCity = countrySelect.value === "uae" || countrySelect.value === "india";
+        cityWrap.classList.toggle("hidden", !showCity);
       }}
 
       function refreshSourceOptions() {{
-        if (!regionSelect || !sourceOptions) return;
-        const regionKey = regionSelect.value === "non_uk" ? "non_uk" : "uk";
-        const items = sourceOptionsByRegion[regionKey] || [];
+        if (!countrySelect || !sourceOptions) return;
+        const items = sourceOptionsByCountry[countrySelect.value] || [];
         sourceOptions.innerHTML = "";
         items.forEach((value) => {{
           const option = document.createElement("option");
@@ -1644,6 +1647,17 @@ def _render_fastapi_html(
             ? `Choose existing or type new (${{items.slice(0, 2).join(", ")}}${{items.length > 2 ? ", ..." : ""}})`
             : "LinkedIn, Wellfound, Company Careers";
         }}
+      }}
+
+      function refreshCityOptions() {{
+        if (!countrySelect || !cityOptions) return;
+        const items = cityOptionsByCountry[countrySelect.value] || [];
+        cityOptions.innerHTML = "";
+        items.forEach((value) => {{
+          const option = document.createElement("option");
+          option.value = value;
+          cityOptions.appendChild(option);
+        }});
       }}
 
       function appendLogs(lines) {{
@@ -1733,8 +1747,8 @@ def _render_fastapi_html(
           const html = await response.text();
           window.clearInterval(logTimer);
           logTimer = null;
-          const nextRegion = regionSelect && regionSelect.value === "non_uk" ? "non_uk" : "uk";
-          pendingRedirectUrl = nextRegion === "non_uk" ? "/?region=non_uk" : "/";
+          const nextCountry = countrySelect ? countrySelect.value : "qatar";
+          pendingRedirectUrl = nextCountry === "qatar" ? "/" : `/?country=${{nextCountry}}`;
           const parsed = new DOMParser().parseFromString(html, "text/html");
           const resultCard = parsed.querySelector(".result-card");
           const downloadLink = parsed.querySelector('a[download]');
@@ -1814,10 +1828,12 @@ def _render_fastapi_html(
         }});
       }}
 
-      toggleNonUk();
+      toggleCityField();
       refreshSourceOptions();
-      regionSelect && regionSelect.addEventListener("change", toggleNonUk);
-      regionSelect && regionSelect.addEventListener("change", refreshSourceOptions);
+      refreshCityOptions();
+      countrySelect && countrySelect.addEventListener("change", toggleCityField);
+      countrySelect && countrySelect.addEventListener("change", refreshSourceOptions);
+      countrySelect && countrySelect.addEventListener("change", refreshCityOptions);
       form && form.addEventListener("submit", startSubmit);
     </script>
   </body>
