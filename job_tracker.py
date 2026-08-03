@@ -302,7 +302,12 @@ def extract_job_info(jd_text):
     system_prompt = (
         "You extract structured data from job descriptions. "
         "Return JSON only in this exact format and no extra keys: "
-        '{"company":"", "role":""}. If unknown, return empty strings.'
+        '{"company":"", "role":"", "country":"", "city":""}. '
+        'If unknown, return empty strings. '
+        '"country" must be one of "qatar", "uae", "india", or empty if the job description '
+        "does not indicate one of those countries. "
+        '"city" should only be filled in when country is "uae" or "india" (e.g. "Dubai", '
+        '"Abu Dhabi", "Bangalore", "Kochi"); leave it empty otherwise.'
     )
 
     payload = {
@@ -331,6 +336,10 @@ def extract_job_info(jd_text):
 
     company = str(parsed.get("company", "")).strip()
     role = str(parsed.get("role", "")).strip()
+    country = str(parsed.get("country", "")).strip().lower()
+    if country not in COUNTRY_DATABASE_IDS:
+        country = ""
+    city = str(parsed.get("city", "")).strip() if country in CITIES_BY_COUNTRY else ""
 
     if not company or not role:
         LOGGER.error(
@@ -338,8 +347,11 @@ def extract_job_info(jd_text):
         )
         raise ValueError("Could not confidently extract company and role from the job description.")
 
-    LOGGER.info("Extraction success | company='%s' | role='%s'", company, role)
-    return {"company": company, "role": role}
+    LOGGER.info(
+        "Extraction success | company='%s' | role='%s' | country='%s' | city='%s'",
+        company, role, country, city,
+    )
+    return {"company": company, "role": role, "country": country, "city": city}
 
 
 @lru_cache(maxsize=8)
