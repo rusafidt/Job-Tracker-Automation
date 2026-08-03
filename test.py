@@ -44,7 +44,7 @@ def main() -> int:
     load_dotenv()
 
     notion_api_key = _get_env("NOTION_API_KEY")
-    notion_db_id = _normalize_notion_id(_get_env("NOTION_DATABASE_ID_NON_UK", "NOTION_DB_ID"))
+    notion_db_id = _normalize_notion_id(_get_env("NOTION_DATABASE_ID_QATAR"))
 
     if not notion_api_key:
         print("Missing NOTION_API_KEY in .env", file=sys.stderr)
