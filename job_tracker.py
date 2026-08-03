@@ -648,16 +648,51 @@ def _get_source_options_for_database(database_id: str) -> list[str]:
     return options
 
 
-def _get_source_options_by_region() -> dict[str, list[str]]:
-    options = {"uk": [], "non_uk": []}
+def _get_source_options_by_country() -> dict[str, list[str]]:
+    options = {"qatar": [], "uae": [], "india": []}
+    for country, getter in COUNTRY_DATABASE_IDS.items():
+        database_id = getter()
+        if database_id:
+            options[country] = _get_source_options_for_database(database_id)
+    return options
 
-    if NOTION_DATABASE_ID:
-        options["uk"] = _get_source_options_for_database(NOTION_DATABASE_ID)
 
-    raw_non_uk_db = (NOTION_DATABASE_ID_NON_UK or "").strip()
-    if raw_non_uk_db and not raw_non_uk_db.startswith("REPLACE_WITH_"):
-        options["non_uk"] = _get_source_options_for_database(_normalize_notion_id(raw_non_uk_db))
+CITY_SEED_OPTIONS = {
+    "uae": ["Dubai", "Abu Dhabi", "Sharjah", "Remote"],
+    "india": [
+        "Bangalore", "Kochi", "Chennai", "Hyderabad",
+        "Mumbai", "Pune", "Delhi NCR", "Remote",
+    ],
+}
 
+
+@lru_cache(maxsize=8)
+def _get_city_options_for_database(database_id: str) -> list[str]:
+    db_props = _get_database_properties(database_id)
+    city_prop_name = _find_property_name(db_props, "City", "Job Location", "Location")
+    if not city_prop_name:
+        LOGGER.warning("City property not found while loading UI options for database %s", database_id)
+        return []
+    return _extract_property_options(db_props.get(city_prop_name) or {})
+
+
+def _merge_city_options(seed: list[str], live: list[str]) -> list[str]:
+    merged = []
+    seen = set()
+    for name in seed + live:
+        key = name.lower()
+        if name and key not in seen:
+            seen.add(key)
+            merged.append(name)
+    return merged
+
+
+def _get_city_options_by_country() -> dict[str, list[str]]:
+    options = {"uae": [], "india": []}
+    for country in options:
+        database_id = COUNTRY_DATABASE_IDS[country]()
+        live = _get_city_options_for_database(database_id) if database_id else []
+        options[country] = _merge_city_options(CITY_SEED_OPTIONS[country], live)
     return options
 
 
@@ -932,6 +967,7 @@ def create_notion_entry(data, database_id: str):
     result = resp.json()
     LOGGER.info("Notion page created | page_id=%s | url=%s", result.get("id", ""), result.get("url", ""))
     _get_database_properties.cache_clear()
+    _get_city_options_for_database.cache_clear()
     return result
 
 
