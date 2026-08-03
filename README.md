@@ -22,7 +22,7 @@ When you submit a form, it:
 - Uploads the resume PDF
 - Attempts to generate a DOCX version of the resume
 - Uploads the cover letter if provided
-- Supports separate UK and Non-UK Notion databases
+- Supports separate Qatar, UAE, and India Notion databases, with a City tracked for UAE/India
 
 ## Stack
 
@@ -38,8 +38,8 @@ When you submit a form, it:
 
 The web UI includes:
 
-- Region selection: `UK` or `Non-UK`
-- Non-UK location selection: `Qatar`, `Dubai`, `Saudi`, `Remote`
+- Country selection: `Qatar`, `UAE`, or `India`
+- City field (UAE/India only): auto-filled from the job description when detected, with suggestions that grow over time, and always editable
 - Source platform field
 - Status toggle
 - Job description textarea
@@ -65,8 +65,9 @@ Required:
 
 - `GROQ_API_KEY`
 - `NOTION_API_KEY`
-- `NOTION_DATABASE_ID`
-- `NOTION_DATABASE_ID_NON_UK`
+- `NOTION_DATABASE_ID_QATAR`
+- `NOTION_DATABASE_ID_UAE`
+- `NOTION_DATABASE_ID_INDIA`
 
 Optional:
 
@@ -156,6 +157,8 @@ This app assumes your Notion databases contain properties similar to:
 - `Company`
 - `Status`
 - `Source` or `Source Platform`
+- `Country`
+- `City` (UAE/India databases only)
 - `Date Applied`
 - `Follow-up Date`
 - `Follow-up Count`
@@ -203,8 +206,9 @@ Check that all required environment variables are set:
 
 - `GROQ_API_KEY`
 - `NOTION_API_KEY`
-- `NOTION_DATABASE_ID`
-- `NOTION_DATABASE_ID_NON_UK`
+- `NOTION_DATABASE_ID_QATAR`
+- `NOTION_DATABASE_ID_UAE`
+- `NOTION_DATABASE_ID_INDIA`
 
 ### File uploads fail
 

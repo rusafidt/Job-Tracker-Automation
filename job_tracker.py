@@ -249,7 +249,7 @@ def _resolve_database_id(country: str, city: str = "") -> tuple[str, str]:
     label = COUNTRY_LABELS[country]
     city = (city or "").strip() if country in CITIES_BY_COUNTRY else ""
     if city:
-        label = f"{label} ({city.title()})"
+        label = f"{label} ({city})"
 
     return database_id, label
 
@@ -896,7 +896,7 @@ def create_notion_entry(data, database_id: str):
 
     city_prop_name = _find_property_name(db_props, "City", "Job Location", "Location")
     city_schema = db_props.get(city_prop_name) if city_prop_name else None
-    city_value = _build_source_property_value(city.title() if city else "", city_schema or {})
+    city_value = _build_source_property_value(city, city_schema or {})
     if city_schema and city_value:
         properties[city_prop_name] = city_value
         LOGGER.info("Mapped city to Notion property '%s'", city_prop_name)
@@ -1607,7 +1607,6 @@ def _render_fastapi_html(
       const form = document.querySelector("form");
       const countrySelect = document.getElementById("country");
       const cityWrap = document.getElementById("city-wrap");
-      const cityInput = document.getElementById("city");
       const cityOptions = document.getElementById("city-options");
       const sourceInput = document.getElementById("source");
       const sourceOptions = document.getElementById("source-options");

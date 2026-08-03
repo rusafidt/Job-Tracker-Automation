@@ -15,7 +15,9 @@ services:
         sync: false
       - key: NOTION_API_KEY
         sync: false
-      - key: NOTION_DATABASE_ID
+      - key: NOTION_DATABASE_ID_QATAR
         sync: false
-      - key: NOTION_DATABASE_ID_NON_UK
+      - key: NOTION_DATABASE_ID_UAE
+        sync: false
+      - key: NOTION_DATABASE_ID_INDIA
         sync: false
