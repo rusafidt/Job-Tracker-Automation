@@ -975,12 +975,15 @@ def process_application(
     jd_text: str,
     source: str,
     status: str = "Applied",
-    region: str = "uk",
-    non_uk_location: str = "",
+    country: str = "qatar",
+    city: str = "",
     resume_path: str = "",
     cover_letter_path: str = "",
 ):
-    database_id, database_label = _resolve_database_id(region, non_uk_location)
+    info = extract_job_info(jd_text)
+    resolved_country = country or info["country"] or "qatar"
+    resolved_city = city or info["city"]
+    database_id, database_label = _resolve_database_id(resolved_country, resolved_city)
     LOGGER.info(
         "Processing application | source='%s' | target_db='%s' | resume_provided=%s | cover_provided=%s",
         source,
@@ -988,8 +991,6 @@ def process_application(
         bool(resume_path),
         bool(cover_letter_path),
     )
-
-    info = extract_job_info(jd_text)
 
     resume_name = ""
     resume_bytes = b""
@@ -1026,6 +1027,8 @@ def process_application(
         "role": info["role"],
         "source": source,
         "status": status,
+        "country": resolved_country,
+        "city": resolved_city,
         "jd_upload": uploads["jd_upload"],
         "resume_pdf_upload": uploads["resume_pdf_upload"],
         "resume_doc_upload": uploads["resume_doc_upload"],
@@ -1039,8 +1042,8 @@ def process_application(
         "role": info["role"],
         "source": source,
         "status": status,
-        "region": region,
-        "non_uk_location": non_uk_location,
+        "country": resolved_country,
+        "city": resolved_city,
         "database_label": database_label,
         "notion_page_url": notion_result.get("url", ""),
     }
@@ -1157,10 +1160,10 @@ def _read_multiline_input(prompt: str) -> str:
 
 def run_cli():
     jd_text = _read_multiline_input("Paste the job description below.")
-    region = input("Region (uk/non_uk): ").strip().lower() or "uk"
-    non_uk_location = ""
-    if region == "non_uk":
-        non_uk_location = input("Non-UK location (qatar/dubai/saudi/remote): ").strip().lower()
+    country = input("Country (qatar/uae/india, blank = auto-detect): ").strip().lower()
+    city = ""
+    if country in CITIES_BY_COUNTRY:
+        city = input("City (optional, blank = auto-detect): ").strip()
     status = input("Status (Applied/Under Review): ").strip() or "Applied"
     source = input("Source platform (LinkedIn, company site, etc.): ").strip()
     resume_path = input("Resume file path (optional, press Enter to skip): ").strip()
@@ -1170,8 +1173,8 @@ def run_cli():
         jd_text,
         source=source,
         status=status,
-        region=region,
-        non_uk_location=non_uk_location,
+        country=country,
+        city=city,
         resume_path=resume_path,
         cover_letter_path=cover_path,
     )
