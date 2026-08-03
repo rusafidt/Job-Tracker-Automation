@@ -1199,18 +1199,21 @@ def _render_fastapi_html(
     jd_text: str = "",
     source: str = "",
     status: str = "Applied",
-    region: str = "uk",
-    non_uk_location: str = "",
-    source_options_by_region: Optional[dict[str, list[str]]] = None,
+    country: str = "qatar",
+    city: str = "",
+    source_options_by_country: Optional[dict[str, list[str]]] = None,
+    city_options_by_country: Optional[dict[str, list[str]]] = None,
 ) -> str:
     safe_error = html.escape(error)
     safe_jd = html.escape(jd_text)
     safe_source = html.escape(source)
     safe_status = html.escape(status or "Applied")
-    safe_region = html.escape(region or "uk")
-    safe_location = html.escape(non_uk_location or "")
-    source_options_by_region = source_options_by_region or {"uk": [], "non_uk": []}
-    source_options_json = json.dumps(source_options_by_region)
+    safe_country = html.escape(country or "qatar")
+    safe_city = html.escape(city or "")
+    source_options_by_country = source_options_by_country or {"qatar": [], "uae": [], "india": []}
+    source_options_json = json.dumps(source_options_by_country)
+    city_options_by_country = city_options_by_country or {"uae": [], "india": []}
+    city_options_json = json.dumps(city_options_by_country)
 
     result_block = ""
     if result:
@@ -1520,21 +1523,25 @@ def _render_fastapi_html(
       <section class="panel">
         <form method="post" enctype="multipart/form-data">
           <div>
-            <label>Region</label>
-            <select id="region" name="region">
-              <option value="uk" {"selected" if safe_region == "uk" else ""}>UK</option>
-              <option value="non_uk" {"selected" if safe_region == "non_uk" else ""}>Non-UK</option>
+            <label>Country</label>
+            <select id="country" name="country">
+              <option value="qatar" {"selected" if safe_country == "qatar" else ""}>Qatar</option>
+              <option value="uae" {"selected" if safe_country == "uae" else ""}>UAE</option>
+              <option value="india" {"selected" if safe_country == "india" else ""}>India</option>
             </select>
           </div>
-          <div id="non-uk-wrap" class="{'hidden' if safe_region != 'non_uk' else ''}">
-            <label>Non-UK Location</label>
-            <select name="non_uk_location">
-              <option value="">Select location</option>
-              <option value="qatar" {"selected" if safe_location == "qatar" else ""}>Qatar</option>
-              <option value="dubai" {"selected" if safe_location == "dubai" else ""}>Dubai</option>
-              <option value="saudi" {"selected" if safe_location == "saudi" else ""}>Saudi</option>
-              <option value="remote" {"selected" if safe_location == "remote" else ""}>Remote</option>
-            </select>
+          <div id="city-wrap" class="{'hidden' if safe_country not in ('uae', 'india') else ''}">
+            <label>City</label>
+            <input
+              id="city"
+              type="text"
+              name="city"
+              list="city-options"
+              value="{safe_city}"
+              placeholder="Dubai, Bangalore, Kochi, ..."
+            />
+            <datalist id="city-options"></datalist>
+            <div class="field-hint">Auto-filled from the job description when detected. Suggestions come from past entries — you can always type a new city.</div>
           </div>
           <div>
             <label>Source Platform</label>
