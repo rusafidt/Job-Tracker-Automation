@@ -845,20 +845,28 @@ def create_notion_entry(data, database_id: str):
                 "Source value provided but Source/Source Platform/Application Source property was not found in database."
             )
 
-    non_uk_location = (data.get("non_uk_location") or "").strip()
-    location_prop_name = _find_property_name(db_props, "Job Location", "Location", "Country")
-    location_schema = db_props.get(location_prop_name) if location_prop_name else None
-    location_value = _build_source_property_value(
-        non_uk_location.title() if non_uk_location else "",
-        location_schema or {},
-    )
-    if location_schema and location_value:
-        properties[location_prop_name] = location_value
-        LOGGER.info("Mapped non-UK location to Notion property '%s'", location_prop_name)
-    elif non_uk_location:
-        LOGGER.warning(
-            "Non-UK location was provided but Job Location/Location/Country property was not found."
-        )
+    country = (data.get("country") or "").strip().lower()
+    if country not in COUNTRY_DATABASE_IDS:
+        country = "qatar"
+    city = (data.get("city") or "").strip()
+
+    country_prop_name = _find_property_name(db_props, "Country")
+    country_schema = db_props.get(country_prop_name) if country_prop_name else None
+    country_value = _build_source_property_value(COUNTRY_LABELS[country], country_schema or {})
+    if country_schema and country_value:
+        properties[country_prop_name] = country_value
+        LOGGER.info("Mapped country to Notion property '%s'", country_prop_name)
+    else:
+        LOGGER.warning("Country property was not found in database; country was not written.")
+
+    city_prop_name = _find_property_name(db_props, "City", "Job Location", "Location")
+    city_schema = db_props.get(city_prop_name) if city_prop_name else None
+    city_value = _build_source_property_value(city.title() if city else "", city_schema or {})
+    if city_schema and city_value:
+        properties[city_prop_name] = city_value
+        LOGGER.info("Mapped city to Notion property '%s'", city_prop_name)
+    elif city:
+        LOGGER.warning("City was provided but City/Job Location/Location property was not found.")
 
     jd_prop_name = _find_property_name(db_props, "Job Description File", "Job Description", "JD File")
     jd_schema = db_props.get(jd_prop_name) if jd_prop_name else None
@@ -923,6 +931,7 @@ def create_notion_entry(data, database_id: str):
     resp.raise_for_status()
     result = resp.json()
     LOGGER.info("Notion page created | page_id=%s | url=%s", result.get("id", ""), result.get("url", ""))
+    _get_database_properties.cache_clear()
     return result
 
 
