@@ -58,8 +58,9 @@ NOTION_API_BASE = "https://api.notion.com/v1"
 
 GROQ_API_KEY = None
 NOTION_API_KEY = None
-NOTION_DATABASE_ID = None
-NOTION_DATABASE_ID_NON_UK = None
+NOTION_DATABASE_ID_QATAR = None
+NOTION_DATABASE_ID_UAE = None
+NOTION_DATABASE_ID_INDIA = None
 LOGGER = logging.getLogger("job_tracker")
 APP_CONFIGURED = False
 UI_LOGS = deque(maxlen=400)
@@ -196,23 +197,24 @@ def _load_and_validate_config() -> None:
 
     global GROQ_API_KEY
     global NOTION_API_KEY
-    global NOTION_DATABASE_ID
-    global NOTION_DATABASE_ID_NON_UK
+    global NOTION_DATABASE_ID_QATAR
+    global NOTION_DATABASE_ID_UAE
+    global NOTION_DATABASE_ID_INDIA
 
     GROQ_API_KEY = os.getenv("GROQ_API_KEY")
     NOTION_API_KEY = os.getenv("NOTION_API_KEY")
-    NOTION_DATABASE_ID = _normalize_notion_id(
-        os.getenv("NOTION_DATABASE_ID") or os.getenv("NOTION_DB_ID")
-    )
+    NOTION_DATABASE_ID_QATAR = _normalize_notion_id(os.getenv("NOTION_DATABASE_ID_QATAR"))
+    NOTION_DATABASE_ID_UAE = _normalize_notion_id(os.getenv("NOTION_DATABASE_ID_UAE"))
+    NOTION_DATABASE_ID_INDIA = _normalize_notion_id(os.getenv("NOTION_DATABASE_ID_INDIA"))
 
     _require_env("GROQ_API_KEY", GROQ_API_KEY)
     _require_env("NOTION_API_KEY", NOTION_API_KEY)
-    _require_env("NOTION_DATABASE_ID", NOTION_DATABASE_ID)
-    NOTION_DATABASE_ID_NON_UK = _normalize_notion_id(
-        os.getenv("NOTION_DATABASE_ID_NON_UK", "REPLACE_WITH_NON_UK_DB_ID")
-    )
+    _require_env("NOTION_DATABASE_ID_QATAR", NOTION_DATABASE_ID_QATAR)
+    _require_env("NOTION_DATABASE_ID_UAE", NOTION_DATABASE_ID_UAE)
+    _require_env("NOTION_DATABASE_ID_INDIA", NOTION_DATABASE_ID_INDIA)
     LOGGER.info(
-        "Environment loaded: GROQ_API_KEY, NOTION_API_KEY, NOTION_DATABASE_ID (+ NOTION_DATABASE_ID_NON_UK placeholder)"
+        "Environment loaded: GROQ_API_KEY, NOTION_API_KEY, NOTION_DATABASE_ID_QATAR, "
+        "NOTION_DATABASE_ID_UAE, NOTION_DATABASE_ID_INDIA"
     )
 
 
