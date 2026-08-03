@@ -1887,38 +1887,41 @@ def create_web_app():
         )
 
     @app.get("/", response_class=HTMLResponse)
-    async def index_get(region: str = "uk"):
-        region = (region or "uk").strip().lower()
-        if region not in {"uk", "non_uk"}:
-            region = "uk"
+    async def index_get(country: str = "qatar"):
+        country = (country or "qatar").strip().lower()
+        if country not in COUNTRY_DATABASE_IDS:
+            country = "qatar"
         return HTMLResponse(
             content=_render_fastapi_html(
-                region=region,
-                source_options_by_region=_get_source_options_by_region(),
+                country=country,
+                source_options_by_country=_get_source_options_by_country(),
+                city_options_by_country=_get_city_options_by_country(),
             )
         )
 
     @app.post("/", response_class=HTMLResponse)
     async def index_post(
-        region: str = Form("uk"),
-        non_uk_location: str = Form(""),
+        country: str = Form("qatar"),
+        city: str = Form(""),
         status: str = Form("Applied"),
         source: str = Form(""),
         jd_text: str = Form(...),
         resume_file: Optional[UploadFile] = File(None),
         cover_file: Optional[UploadFile] = File(None),
     ):
-        region = (region or "uk").strip().lower()
-        non_uk_location = (non_uk_location or "").strip().lower()
+        country = (country or "qatar").strip().lower()
+        if country not in COUNTRY_DATABASE_IDS:
+            country = "qatar"
+        city = (city or "").strip()
         source = source.strip()
         status = (status or "Applied").strip()
         if status not in {"Applied", "Under Review"}:
             status = "Applied"
         jd_text = jd_text.strip()
         LOGGER.info(
-            "Web submission received | region='%s' | non_uk='%s' | status='%s' | source='%s' | jd_chars=%d | resume='%s' | cover='%s'",
-            region,
-            non_uk_location,
+            "Web submission received | country='%s' | city='%s' | status='%s' | source='%s' | jd_chars=%d | resume='%s' | cover='%s'",
+            country,
+            city,
             status,
             source,
             len(jd_text),
@@ -1933,9 +1936,10 @@ def create_web_app():
                     jd_text=jd_text,
                     source=source,
                     status=status,
-                    region=region,
-                    non_uk_location=non_uk_location,
-                    source_options_by_region=_get_source_options_by_region(),
+                    country=country,
+                    city=city,
+                    source_options_by_country=_get_source_options_by_country(),
+                    city_options_by_country=_get_city_options_by_country(),
                 )
             )
 
@@ -1960,8 +1964,8 @@ def create_web_app():
 
             result = await asyncio.to_thread(
                 _process_web_submission_sync,
-                region=region,
-                non_uk_location=non_uk_location,
+                country=country,
+                city=city,
                 status=status,
                 source=source,
                 jd_text=jd_text,
@@ -1975,7 +1979,8 @@ def create_web_app():
             return HTMLResponse(
                 content=_render_fastapi_html(
                     result=result,
-                    source_options_by_region=_get_source_options_by_region(),
+                    source_options_by_country=_get_source_options_by_country(),
+                    city_options_by_country=_get_city_options_by_country(),
                 )
             )
         except Exception as exc:
@@ -1986,9 +1991,10 @@ def create_web_app():
                     jd_text=jd_text,
                     source=source,
                     status=status,
-                    region=region,
-                    non_uk_location=non_uk_location,
-                    source_options_by_region=_get_source_options_by_region(),
+                    country=country,
+                    city=city,
+                    source_options_by_country=_get_source_options_by_country(),
+                    city_options_by_country=_get_city_options_by_country(),
                 )
             )
 
