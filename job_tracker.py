@@ -228,21 +228,30 @@ def configure_runtime(debug: bool = False) -> None:
     APP_CONFIGURED = True
 
 
-def _resolve_database_id(region: str, non_uk_location: str = "") -> tuple[str, str]:
-    region = (region or "uk").strip().lower()
-    if region == "uk":
-        return NOTION_DATABASE_ID, "UK"
+COUNTRY_DATABASE_IDS = {
+    "qatar": lambda: NOTION_DATABASE_ID_QATAR,
+    "uae": lambda: NOTION_DATABASE_ID_UAE,
+    "india": lambda: NOTION_DATABASE_ID_INDIA,
+}
+COUNTRY_LABELS = {"qatar": "Qatar", "uae": "UAE", "india": "India"}
+CITIES_BY_COUNTRY = {"uae", "india"}
 
-    location = (non_uk_location or "").strip().lower()
-    if location not in {"qatar", "dubai", "saudi", "remote"}:
-        raise ValueError("For Non-UK jobs, select one location: qatar, dubai, saudi, or remote.")
 
-    raw_db_id = (NOTION_DATABASE_ID_NON_UK or "").strip()
-    if not raw_db_id or raw_db_id.startswith("REPLACE_WITH_"):
-        raise ValueError("Set NOTION_DATABASE_ID_NON_UK in .env before using Non-UK jobs.")
+def _resolve_database_id(country: str, city: str = "") -> tuple[str, str]:
+    country = (country or "").strip().lower()
+    if country not in COUNTRY_DATABASE_IDS:
+        country = "qatar"
 
-    resolved = _normalize_notion_id(raw_db_id)
-    return resolved, f"Non-UK ({location.title()})"
+    database_id = COUNTRY_DATABASE_IDS[country]()
+    if not database_id:
+        raise ValueError(f"Set NOTION_DATABASE_ID_{country.upper()} in .env before using {country.title()} jobs.")
+
+    label = COUNTRY_LABELS[country]
+    city = (city or "").strip() if country in CITIES_BY_COUNTRY else ""
+    if city:
+        label = f"{label} ({city.title()})"
+
+    return database_id, label
 
 
 def _notion_headers(content_type_json: bool = True) -> dict:
