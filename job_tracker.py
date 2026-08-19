@@ -43,12 +43,13 @@ except ImportError:
 
 
 GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions"
-GROQ_MODEL = "llama-3.1-8b-instant"
+GROQ_MODEL_DEFAULT = "openai/gpt-oss-20b"
 NOTION_VERSION = "2025-09-03"
 NOTION_API_BASE = "https://api.notion.com/v1"
 
 
 GROQ_API_KEY = None
+GROQ_MODEL = GROQ_MODEL_DEFAULT
 NOTION_API_KEY = None
 NOTION_DATABASE_ID_QATAR = None
 NOTION_DATABASE_ID_UAE = None
@@ -188,12 +189,14 @@ def _load_and_validate_config() -> None:
     load_dotenv()
 
     global GROQ_API_KEY
+    global GROQ_MODEL
     global NOTION_API_KEY
     global NOTION_DATABASE_ID_QATAR
     global NOTION_DATABASE_ID_UAE
     global NOTION_DATABASE_ID_INDIA
 
     GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+    GROQ_MODEL = os.getenv("GROQ_MODEL", GROQ_MODEL_DEFAULT).strip() or GROQ_MODEL_DEFAULT
     NOTION_API_KEY = os.getenv("NOTION_API_KEY")
     NOTION_DATABASE_ID_QATAR = _normalize_notion_id(os.getenv("NOTION_DATABASE_ID_QATAR"))
     NOTION_DATABASE_ID_UAE = _normalize_notion_id(os.getenv("NOTION_DATABASE_ID_UAE"))
