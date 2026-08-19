@@ -42,7 +42,7 @@ There is no lint config, no automated test suite, and no build step in this repo
 ## Environment Variables
 
 Required: `GROQ_API_KEY`, `NOTION_API_KEY`, `NOTION_DATABASE_ID_QATAR`, `NOTION_DATABASE_ID_UAE`, `NOTION_DATABASE_ID_INDIA`
-Optional: `DEBUG`, `HOST`, `PORT`, `JOB_TRACKER_LOG_FILE`
+Optional: `GROQ_MODEL` (defaults to `openai/gpt-oss-20b`), `DEBUG`, `HOST`, `PORT`, `JOB_TRACKER_LOG_FILE`
 
 IDs can be pasted as either a raw hex string or a full Notion URL — `_normalize_notion_id` extracts and reformats them.
 
